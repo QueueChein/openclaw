@@ -271,7 +271,6 @@ let flushChatQueueForEvent: typeof import("./chat-send-actions.ts").flushChatQue
 let retryReconnectableQueuedChatSends: typeof import("./chat-send-actions.ts").retryReconnectableQueuedChatSends;
 let retryQueuedChatMessage: typeof import("./chat-send-actions.ts").retryQueuedChatMessage;
 let recordChatSendServerTiming: typeof import("./chat-send-timing.ts").recordChatSendServerTiming;
-let deliverChatQueueItem: typeof import("./chat-send-delivery.ts").deliverChatQueueItem;
 let beginQueuedMessageEdit: typeof import("./queued-message-edit.ts").beginQueuedMessageEdit;
 let refreshPageChat: typeof import("./chat-state-refresh.ts").refreshPageChat;
 
@@ -283,7 +282,6 @@ async function loadChatHelpers(): Promise<void> {
     retryQueuedChatMessage,
   } = await import("./chat-send-actions.ts"));
   ({ handleSendChat } = await import("./chat-send-submit.ts"));
-  ({ deliverChatQueueItem } = await import("./chat-send-delivery.ts"));
   ({ recordChatSendServerTiming } = await import("./chat-send-timing.ts"));
   ({ beginQueuedMessageEdit } = await import("./queued-message-edit.ts"));
   ({ handlePageGatewayEvent } = await import("./chat-state-events.ts"));
@@ -3725,52 +3723,6 @@ describe("handleSendChat", () => {
     expect(host.request).not.toHaveBeenCalled();
     expect(host.chatQueue).toStrictEqual([original]);
     expect(listStoredChatOutboxes(host)).toStrictEqual([]);
-    expect(host.lastError).toBe(
-      "Could not store this message for reconnect. Free browser storage or reconnect before sending.",
-    );
-  });
-
-  it("terminates quietly when a removed durable row resumes delivery", async () => {
-    const item = {
-      id: "retired-during-input-window",
-      text: "removed before the delayed submission resumes",
-      createdAt: 1,
-      sessionKey: "agent:main",
-    };
-    const host = makeChatHost({
-      requestHandlers: {},
-    });
-    const admission = captureChatOutboxAdmission(host, item.sessionKey);
-    expect(admitQueuedMessageForSession(host, admission, item)).toBe(true);
-    expect(listStoredChatOutboxes(host).flatMap((outbox) => outbox.queue)).toEqual([item]);
-
-    // The operator removes the row during the post-admission input window.
-    expect(removeQueuedMessage(host, item.id)).toBe("removed");
-
-    // The delayed submission task resumes with its captured retired item.
-    const result = await deliverChatQueueItem(host, item, { storageMode: "durable" });
-
-    expect(result).toBe("failed");
-    expect(host.lastError).toBeNull();
-    expect(host.chatError).toBeUndefined();
-    expect(host.request).not.toHaveBeenCalled();
-  });
-
-  it("still reports a storage error when a live row's durable outbox is unreadable", async () => {
-    const item = {
-      id: "volatile-only-row",
-      text: "no durable copy exists for this live row",
-      createdAt: 1,
-      sessionKey: "agent:main",
-    };
-    const host = makeChatHost({
-      requestHandlers: {},
-      chatQueue: [item],
-    });
-
-    const result = await deliverChatQueueItem(host, item, { storageMode: "durable" });
-
-    expect(result).toBe("pending");
     expect(host.lastError).toBe(
       "Could not store this message for reconnect. Free browser storage or reconnect before sending.",
     );

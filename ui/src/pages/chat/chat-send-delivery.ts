@@ -576,14 +576,8 @@ export async function deliverChatQueueItem(
       candidate.queue.some((entry) => entry.id === item.id),
     );
     if (!outbox) {
-      // Admission succeeded; removal or another drain can retire the row while we
-      // yield. A row that is truly gone has nothing left to deliver: terminate
-      // quietly like the memory lane and the settings-wait sibling. Only a row
-      // that still exists somewhere while its durable copy is unreadable is a
-      // storage failure.
-      if (!readQueuedMessageById(host, item.id)) {
-        return "failed";
-      }
+      // Submission revalidates operator removal before entering delivery; a
+      // missing admitted outbox here means its durable projection is unreadable.
       setChatError(host, OFFLINE_QUEUE_STORAGE_ERROR);
       return "pending";
     }
