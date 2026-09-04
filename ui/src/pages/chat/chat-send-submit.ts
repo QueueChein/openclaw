@@ -8,7 +8,6 @@ import { extractCompanionCommandQuestion } from "../../lib/chat/companion-questi
 import { resolveCurrentUserIdentity } from "../../lib/chat/current-user-identity.ts";
 import type { ControlUiFollowUpMode } from "../../lib/chat/follow-up-mode.ts";
 import { trimHumanMentions } from "../../lib/chat/human-mentions.ts";
-import { sameQueuedDeliveryVersion } from "../../lib/chat/outbox-store-codec.ts";
 import { captureChatOutboxAdmission } from "../../lib/chat/outbox-store.ts";
 import { scopedAgentIdForSession, visibleSessionMatches } from "../../lib/sessions/index.ts";
 import { resolveUiConversationIdentity } from "../../lib/sessions/session-key.ts";
@@ -62,6 +61,7 @@ import {
 import { recordChatSendTiming } from "./chat-send-timing.ts";
 import { getPendingChatPickerPatch } from "./chat-session.ts";
 import { withChatSubmitGuard, yieldChatSubmitToInput } from "./chat-submit-guard.ts";
+import { queueItemVersionMatches } from "./composer-persistence.ts";
 import {
   recordNonTranscriptInputHistory,
   resetChatInputHistoryNavigation,
@@ -94,6 +94,7 @@ export type ChatSendSubmitOptions = {
   /** Lets request-scoped UI actions recover from rejected local commands. */
   onLocalCommandSendRejected?: () => void;
 };
+type ChatReplyTarget = NonNullable<ChatHost["chatReplyTarget"]>;
 
 function isChatResetCommand(text: string) {
   const parsed = parseSlashCommand(text);
@@ -681,17 +682,18 @@ export async function handleSendChat(
     }
     let deliveryItem: typeof queued | null = queued;
     if (admittedDurably && submissionAction && typeof MessageChannel !== "undefined") {
-      // Yielded input may retire the durable row; clear its pane-local presentation too.
+      // Only the same durable version may cross yielded input; retire pane-local absent rows.
       await yieldChatSubmitToInput();
       const owner = chatOutboxOwner(host);
       const current = submissionOwnerIsCurrent() ? owner.locate(host, queued.id) : undefined;
-      if (current && !current.durable) {
+      if (current && current.durable === undefined) {
         owner.change(host, queued.id);
       }
-      // Only the same still-durable delivery version may cross this handoff.
+      const version = current?.durable ?? current?.item;
       deliveryItem =
-        current?.durable &&
-        sameQueuedDeliveryVersion(queued, { ...current.item, orderKey: queued.orderKey })
+        current?.durable !== undefined &&
+        version &&
+        queueItemVersionMatches(version, { ...queued, orderKey: version.orderKey }, current.scope)
           ? current.item
           : null;
     }
@@ -737,18 +739,7 @@ export async function handleSendChat(
   return accepted;
 }
 
-function prependReplyQuote(
-  message: string,
-  replyTarget: NonNullable<ChatHost["chatReplyTarget"]>,
-): string {
-  const label = (replyTarget.senderLabel ?? "User").replace(/([\\`*_{}[\]()#+\-.!|>])/g, "\\$1");
+function prependReplyQuote(message: string, replyTarget: ChatReplyTarget): string {
   const text = replyTarget.text.trim();
-  if (!text.includes("\n")) {
-    return `> **${label}:** ${text}\n\n${message}`;
-  }
-  const quoted = text
-    .split("\n")
-    .map((line) => `> ${line}`)
-    .join("\n");
-  return `> **${label}:**\n${quoted}\n\n${message}`;
+  return `> **${(replyTarget.senderLabel ?? "User").replace(/([\\`*_{}[\]()#+\-.!|>])/g, "\\$1")}:**${text.includes("\n") ? `\n> ${text.replaceAll("\n", "\n> ")}` : ` ${text}`}\n\n${message}`;
 }
