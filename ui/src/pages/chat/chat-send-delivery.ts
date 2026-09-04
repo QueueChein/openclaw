@@ -576,8 +576,6 @@ export async function deliverChatQueueItem(
       candidate.queue.some((entry) => entry.id === item.id),
     );
     if (!outbox) {
-      // Submission revalidates operator removal before entering delivery; a
-      // missing admitted outbox here means its durable projection is unreadable.
       setChatError(host, OFFLINE_QUEUE_STORAGE_ERROR);
       return "pending";
     }

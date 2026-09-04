@@ -20,6 +20,7 @@ import {
   shouldQueueLocalSlashCommand,
 } from "./chat-commands.ts";
 import { loadChatHistory } from "./chat-history.ts";
+import { chatOutboxOwner } from "./chat-outbox-owner.ts";
 import {
   admitQueuedMessageForSession,
   enqueueChatMessage,
@@ -680,19 +681,18 @@ export async function handleSendChat(
     }
     let deliveryItem: typeof queued | null = queued;
     if (admittedDurably && submissionAction && typeof MessageChannel !== "undefined") {
-      // The outbox now owns the prompt across reloads. Return control before
-      // delivery work so the browser can accept the operator's next input.
+      // Yielded input may retire the durable row; clear its pane-local presentation too.
       await yieldChatSubmitToInput();
-      const current =
-        submissionOwnerIsCurrent() &&
-        visibleSessionMatches(host, queued.sessionKey!, queued.agentId)
-          ? readQueuedMessageById(host, queued.id)
-          : null;
-      // Input may retire this admission or another drain may advance it. Only
-      // position changes preserve the handoff; the drain owns ordering/edit holds.
+      const owner = chatOutboxOwner(host);
+      const current = submissionOwnerIsCurrent() ? owner.locate(host, queued.id) : undefined;
+      if (current && !current.durable) {
+        owner.change(host, queued.id);
+      }
+      // Only the same still-durable delivery version may cross this handoff.
       deliveryItem =
-        current && sameQueuedDeliveryVersion(queued, { ...current, orderKey: queued.orderKey })
-          ? current
+        current?.durable &&
+        sameQueuedDeliveryVersion(queued, { ...current.item, orderKey: queued.orderKey })
+          ? current.item
           : null;
     }
     const sendResult = deliveryItem

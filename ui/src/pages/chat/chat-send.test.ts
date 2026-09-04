@@ -6883,6 +6883,25 @@ describe("handleSendChat", () => {
     expect(host.request).not.toHaveBeenCalled();
   });
 
+  it("retires a waiting-model submission removed by a peer pane during the input yield", async () => {
+    const settings = createDeferred<boolean>();
+    const host = makeChatHost({
+      chatMessage: "discard from peer",
+      pendingSettingsPatches: { "agent:main": settings.promise },
+      requestHandlers: {},
+    });
+    const peer = makeChatHost({ client: host.client });
+    await submitAcrossBrowserInput(host, (queued) => {
+      expect(removeQueuedMessage(peer, queued.id)).toBe("removed");
+      expect(host.chatQueue[0]?.sendState).toBe("waiting-model");
+      settings.resolve(true);
+    });
+
+    expect(host.lastError).toBeNull();
+    expect(host.chatQueue).toEqual([]);
+    expect(host.request).not.toHaveBeenCalled();
+  });
+
   it.each(["client", "epoch", "session", "recovery owner"])(
     "retires an event-backed continuation after its %s changes during the browser input yield",
     async (change) => {
